@@ -1,0 +1,286 @@
+#!/system/bin/sh
+
+cd "${0%/*}"
+cd ../
+
+BU="./*/busybox"
+
+$BU find -name "*.bak" | $BU xargs rm -f >/dev/null 2>&1
+
+chmod -R 777 * >/dev/null 2>&1
+
+source ./*.ini
+
+IN="iptables -t nat"
+IM="iptables -t mangle"
+OUT=OUTPUT
+FOR=FORWARD
+PRE=PREROUTING
+POS=POSTROUTING
+S192="-s 192.168/16"
+D192="-d 192.168/16"
+D255="-d 255.255.255.255"
+PS192="PREROUTING -s 192.168/16"
+NERA="-m state --state NEW,ESTABLISHED,RELATED -j ACCEPT"
+
+if [[ $XZMS != "" ]]
+then MS=$XZMS
+else MS=*;fi
+
+if [[ $1 = "OFF" ]]
+then if [[ $SJ = "ON" ]]
+then svc data disable;fi
+
+$BU pkill tiny
+$BU pkill localproxy
+$BU killall CProxy >/dev/null 2>&1
+
+for QCIN in $PRE $OUT;do
+for QCIM in $PRE $FOR $OUT;do
+$IN -F $QCIN
+$IM -P $QCIM ACCEPT
+$IM -F $QCIM;done;done
+
+$IN -I $PRE -j oem_nat_pre
+
+echo 0 > /proc/sys/net/ipv4/ip_forward
+echo 0 > /proc/sys/net/ipv4/ip_dynaddr
+
+sleep 0.1;fi
+
+
+if [[ $2 = "ON" ]]
+then if [ -e ./$MS.conf ]
+then if [[ $HX = "CProxy" ]]
+then uid=`$BU grep uid $MS.conf | $BU grep -o [0-9][0-9]\*`
+listen_port=`$BU grep tcp_listen $MS.conf | $BU grep -o [0-9][0-9]\*`
+dns_listen_port=`$BU grep dns_listen $MS.conf | $BU grep -o [0-9][0-9]\*`
+./*/CProxy $MS.conf >/dev/null 2>&1
+
+elif [[ $HX = "localproxy" ]]
+then source ./$MS.conf
+./*/localproxy -c ./$MS.conf
+
+else source ./$MS.conf
+./*/tiny -c ./$MS.conf;fi;fi
+
+for ZJL in $OUT $FOR;do
+$IM -P $ZJL DROP
+$IM -I $ZJL -m state --state INVALID -j DROP;done
+
+$IM -I $PS192 -j DROP
+$IM -I $PS192 -m state --state INVALID -j DROP
+
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/ipv4/ip_dynaddr
+
+if [[ $BMD != "" ]]
+then for ZJL in $BMD;do
+$IM -I $OUT -p 6 -s $ZJL/16 $NERA
+$IM -I $OUT -p 17 -s $ZJL/16 --dport 53 $NERA;done
+else $IM -I $OUT -p 6 $NERA
+$IM -I $OUT -p 17 --dport 53 $NERA;fi
+
+$IN -I $OUT -j DNAT --to 0
+
+$IN -I $OUT -p 6 -j REDIRECT --to $listen_port
+
+if [[ $DNS = "ON" ]]
+then $IN -I $OUT -p 17 --dport 53 -j ACCEPT
+$IM -I $OUT -p 17 --dport 53 -j ACCEPT
+
+elif [[ $DNS != "" ]]
+then $IN -I $OUT -p 17 --dport 53 -j DNAT --to $DNS
+else $IN -I $OUT -p 17 --dport 53 -j REDIRECT --to $dns_listen_port;fi
+
+$IN -I $OUT -p 6 -m owner --uid $user$uid -j ACCEPT
+$IM -I $OUT -p 6 -m owner --uid $user$uid -j ACCEPT
+
+if [[ $ICMP = "ON" ]]
+then $IN -I $OUT -p 1 -j ACCEPT
+$IM -I $OUT -p 1 -j ACCEPT;fi
+
+$IN -I $OUT $S192 -j ACCEPT
+$IM -I $OUT $S192 -j ACCEPT
+
+if [[ $GX = "ON" ]]
+then $IM -I $PS192 -j ACCEPT
+$IM -P $FOR ACCEPT
+
+elif [[ $GX != "ON" ]] && [[ $GX != "OFF" ]]
+then $IN -I $PS192 -j DNAT --to 0
+$IM -I $PS192 -p 6 $NERA
+$IM -I $PS192 -p 17 --dport 53 $NERA
+
+$IN -I $PS192 -p 6 -j REDIRECT --to $listen_port
+
+if [[ $GFD = "ON" ]]
+then $IM -I $FOR -p 17 --dport 53 -j ACCEPT
+$IN -I $PS192 -p 17 --dport 53 -j ACCEPT
+$IM -I $PS192 -p 17 --dport 53 -j ACCEPT
+else $IN -I $PS192 -p 17 --dport 53 -j REDIRECT --to $dns_listen_port;fi
+
+if [[ $GFU = "ON" ]]
+then $IM -I $FOR -p 17 ! --dport 53 -j ACCEPT
+$IN -I $PS192 -p 17 ! --dport 53 -j ACCEPT
+$IM -I $PS192 -p 17 ! --dport 53 -j ACCEPT;fi
+
+if [[ $ICMP = "ON" ]]
+then $IM -I $FOR -p 1 -j ACCEPT
+$IN -I $PS192 -p 1 -j ACCEPT
+$IM -I $PS192 -p 1 -j ACCEPT;fi
+
+$IN -I $PRE $D192 -j ACCEPT
+$IM -I $PRE $D192 -j ACCEPT;fi
+
+for ZJL in rndis+ wlan+ tun+ ap+ lo;do
+$IM -I $OUT -o $ZJL -j ACCEPT
+$IN -I $OUT -o $ZJL -j ACCEPT;done
+
+if [[ $SJ = "ON" ]]
+then svc data enable;fi
+
+if [[ $FX != "" ]]
+then for ZJL in $FX;do
+$IN -I $OUT -m owner --uid $ZJL -j ACCEPT
+$IM -I $OUT -m owner --uid $ZJL -j ACCEPT;done;fi
+
+if [[ $JW != "" ]]
+then for ZJL in $JW;do
+$IM -I $OUT -m owner --uid $ZJL -j DROP;done;fi
+
+if [[ $FU = "ON" ]]
+then $IN -I $OUT -p 17 -j ACCEPT
+$IM -I $OUT -p 17 -j ACCEPT
+
+elif [[ $FU != "" ]]
+then for ZJL in $FU;do
+$IN -I $OUT -m owner --uid $ZJL -p 17 -j ACCEPT
+$IM -I $OUT -m owner --uid $ZJL -p 17 -j ACCEPT;done;fi
+
+if [[ $YX = "ON" ]]
+then for ZJL in com.tencent.tmgp.sgame com.ztgame.bob com.tencent.tmgp.cf;do
+BM=`$BU cat /data/system/packages.list | $BU grep $ZJL | $BU cut -d " " -f 2`
+
+for ZJL in $BM;do
+$IN -I $OUT -p 17 ! --dport 53 -m owner --uid $ZJL -j ACCEPT
+$IM -I $OUT -p 17 ! --dport 53 -m owner --uid $ZJL -j ACCEPT;done;done;fi
+
+if [[ $FS = "ON" ]]
+then $IN -I $OUT -p 6 --dport 443 -j ACCEPT
+$IM -I $OUT -p 6 --dport 443 -j ACCEPT
+
+elif [[ $FS != "" ]]
+then for ZJL in $FS;do
+$IN -I $OUT -p 6 --dport 443 -m owner --uid $ZJL -j ACCEPT
+$IM -I $OUT -p 6 --dport 443 -m owner --uid $ZJL -j ACCEPT;done;fi
+
+if [[ $JS = "ON" ]]
+then $IM -I $OUT -p 6 --dport 443 -j DROP
+
+elif [[ $JS != "" ]]
+then for ZJL in $JS;do
+$IM -I $OUT -p 6 --dport 443 -m owner --uid $ZJL -j DROP;done;fi
+
+if [[ $GS = "ON" ]]
+then $IM -I $FOR -p 6 --dport 443 -j ACCEPT
+$IN -I $PS192 -p 6 --dport 443 -j ACCEPT
+$IM -I $PS192 -p 6 --dport 443 -j ACCEPT
+
+elif [[ $GS = "OFF" ]]
+then $IM -I $FOR -p 6 --dport 443 -j DROP
+$IM -I $PS192 -p 6 --dport 443 -j DROP;fi
+
+for ZJL in /system/etc/init.qcom.post_boot.sh;do
+CXZQ=`$BU cat $ZJL | $BU grep "${PWD}/开启.sh"`
+
+if [[ $ZQ = "ON" ]] && [[ $CXZQ = "" ]]
+then echo "\n${PWD}/开启.sh" >> $ZJL
+
+elif [[ $ZQ != "ON" ]] && [[ $CXZQ != "" ]]
+then echo "`sed "/开启.sh/d" $ZJL`" > $ZJL;fi;done
+
+sleep 1;fi
+
+
+NW=`$BU ip addr | $BU grep global | $BU grep inet | $BU grep -v inet6 | $BU grep -v 10.0 | $BU grep -v 192.168 | $BU awk '{print $2}' | $BU cut -d "/" -f 1`
+
+RD=`$BU ip neigh | $BU grep REACHABLE | $BU grep -v "192.168.1.1"  | $BU grep -v "192.168.0.1" | $BU awk '{print $1}'`
+
+HQJRD=`dumpsys connectivity | $BU grep "HttpProxy:"`
+
+JRDDL=`echo ${HQJRD#*HttpProxy:}| $BU cut -d "[" -f 2| $BU cut -d "]" -f 1`
+
+JRDDK=`echo ${HQJRD#*$JRDDL} | $BU cut -d " " -f 2`
+
+for WK in `$BU cat /data/misc/net/rt_tables`;do
+if [[ `$BU ip addr | $BU grep "/" | $BU grep -i $WK` != "" ]]
+then WWK=$WK
+SWK=`$BU ifconfig $WK` 2>/dev/null;fi;done
+
+TX=`echo ${SWK#*RX bytes} | $BU cut -d "(" -f 2 | $BU cut -d ")" -f 1 | $BU cut -d "i" -f 1`
+
+source /data/misc/wifi/hostapd.conf >/dev/null 2>&1
+
+RWK=`$BU ifconfig $interface` >/dev/null 2>&1
+
+printf "\n%45s\n\n%13s   %s\n\n%45s\n\n" ━━━━━━━━━━━━━━ ZJL 1.7 ━━━━━━━━━━━━━━
+
+if [ -e ./$MS.conf ]
+then if [[ `$BU pgrep tiny` != "" ]]
+then echo "     核心 : tiny √\n"
+
+elif [[ `$BU pgrep CProxy` != "" ]]
+then echo "     核心 : CProxy √\n"
+
+elif [[ `$BU pgrep localproxy` != "" ]]
+then echo "     核心 : localproxy √\n"
+
+else echo "     核心 : 什么都没开 ×\n";fi
+
+else echo "     模式 : 模式有问题 ×\n";fi
+
+if [[ $XZMS != "" ]]
+then echo "     模式 : $XZMS.conf\n";fi
+
+if [[ $WWK != "wlan0" ]]
+then if [[ $JRDDL$JRDDK = "" ]]
+then jrddl="代理留空";fi
+
+if [[ $TX = "0.0 B" ]] || [[ $TX = "" ]]
+then LL="没查到流量 ×"
+else LL="$TX 流量";fi
+
+if [[ $NW != "" ]]
+then for ZJL in $NW;do
+done
+
+echo "     内网 : $ZJL\n"
+
+APN=`dumpsys connectivity | $BU grep -v "<unknown" | $BU grep -v "(none)" | $BU grep extra | $BU awk '{print $9}' | $BU cut -d "," -f 1 | $BU grep -v "ims"`
+
+if [[ $APN != "" ]]
+then echo "     APN : $APN $jrddl$JRDDL $JRDDK\n";fi
+
+echo "     已用 : $LL\n"
+
+else echo "     网络 : 数据都没开 ×\n";fi
+
+else echo "     网络 : WiFi 已连接 √\n\n     已用 : $TX\n";fi
+
+if [[ $RD != "" ]] && [[ `$BU ip addr | $BU grep inet | $BU grep 192.168.43.1` != "" ]]
+then printf "%45s\n\n" ━━━━━━━━━━━━━━
+
+for ZJL in $RD;do
+
+if [ $ZJL != "" ]
+then zjl=$(($zjl+1));fi;done
+
+echo "     热点 : $zjl 个已连接\n\n     信息 :`$BU cat /data/misc/wifi/softap.conf`\n\n     已用 : `echo ${RWK#*TX bytes} | $BU cut -d "(" -f 2 | $BU  cut -d ")" -f 1 | $BU cut -d "i" -f 1` 流量\n";fi
+
+if [[ $XWB != "" ]]
+then printf "%45s\n\n" ━━━━━━━━━━━━━━
+
+echo "$XWB\n";fi
+
+printf "%45s\n" ━━━━━━━━━━━━━━            

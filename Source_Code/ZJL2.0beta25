@@ -1,0 +1,1059 @@
+#!/system/bin/sh
+
+# 用来读取 = 号后面的内容
+getConfigure()
+{
+	echo "`echo "${configureFileContent}" | sed -n 's/'${1}'=[ \t]*//p'`"
+}
+
+
+# 获取模式的端口
+getConfPort()
+{
+	echo "`echo "${modeListenPortList}" | grep -w "${1}" | sed "s/.*://" | grep -o "[0-9][0-9]*"`"
+}
+
+
+# 包名读取UID
+getUid()
+{
+	# 包名列表内容为空就读取
+	[[ ! ${packages} ]] && packages="`sed -r 's/([^ ]*) ([0-9]*) .*/\1 \2/g' /data/system/packages.list`"
+	echo "`echo "$packages" | grep -w "${1}" | sed 's/.*[ \t]//'`"
+}
+
+
+# 读取模式及端口
+readModePort()
+{
+	# 读取模式内容 去除了空行以及//和#开头的内容
+	modeFileContent="`sed 's/\/\/.*$//;s/#.*$//;/^[ ]*$/d' ${modeFile}`"
+	# 读取模式内带有端口内容的行
+	modeListenPortList="`echo "${modeFileContent}" | grep "listen"`"
+		
+	# 判断核心是否为clnc 模式是否开启UDP
+	if [[ "clnc" == ${unlimitedDataWay} && `echo "${modeFileContent}" | grep -i "httpUDP"` ]]
+	then
+		# 读取UDP转发端口
+		udpForwardPort="`getConfPort udp_tproxy_listen`"
+		
+		# 判断是否开启代理 UDP
+		if [[ ${udpForwardPort} ]]
+		then
+			[[ "代理" == ${nativeUDP} && "放行" != ${releaseNativeUID} && "禁网" != ${banNativeUID} ]] && proxyNativeUDP="true"
+			[[ "代理" == ${hotspotUDP}  && "放行" != ${hotspotNetwork} && "禁网" != ${hotspotNetwork} ]] && proxyHotspotUDP="true"
+		fi
+	fi
+}
+
+
+# 获取传入的网卡所使用的流量
+getNetworkCardTraffic()
+{
+	# 判断是否存在busybox
+	if [[ ${isExistBusybox} ]]
+	then
+		# 获取网卡使用的流量
+		local flow="`ifconfig ${1} | grep -i 'RX bytes' | sed 's/.*RX bytes:.*(\(.*B\)).*TX.*/\1/;s/i.*//'`"
+		
+		# 输出流量数
+		[[ "0.0 B" == ${flow} || "" == ${flow} ]] && centerOutput "已用: 没查到 ×\n" || centerOutput "已用: ${flow}\n"
+	fi
+}
+
+
+# 放行本机UID对应的应用
+releaseUid()
+{
+	iptables -t nat -I OUTPUT -m owner --uid ${1} -j ACCEPT
+	iptables -t mangle -I OUTPUT -m owner --uid ${1} -j ACCEPT
+}
+
+
+# 放行指定 协议 && 端口组合
+releasePort()
+{
+	for ZJL in ${3}
+	do
+		iptables -t nat -I ${1} -p ${2} -m multiport --dport ${ZJL} -j ACCEPT
+		iptables -t mangle -I ${1} -p ${2} -m multiport --dport ${ZJL} -j ACCEPT
+	done
+}
+
+
+# 检测网络输出部分 第一个参数为超时时间 不指定默认为2
+checkExtranetOutput()
+{
+	# 关闭防跳的时候不检测
+	[[ "stop" == ${scriptExecutionStatus} ]] && return 1
+	
+	# 如果开启了检测就判断是否存在MLBox模块 不存在就提示
+	if [[ ${checkExtranetWay} || ${checkExtranetUDP} ]] && [[ ! ${isMLBoxExist} ]]
+	then
+		centerOutput "${dividingLine}"
+		centerOutput "[检测联网]和[检测UDP联网]需要MLBox  \n"
+		centerOutput "请将MLBox模块复制进模块文件夹  \n"
+		return 2
+	fi
+	
+	# 判断是否开启检测联网功能
+	if [[ ${checkExtranetWay} ]]
+	then
+		# 存储获取到的数据
+		local extranetIP
+		# 超时时间(单位秒)
+		local time="2"
+		[[ ${1} ]] && time="${1}"
+		
+		# 通过MLBox检测网络连接
+		case ${checkExtranetWay} in
+			a|A)
+				# ip138 的接口
+				extranetIP="`MLBox -http="http://202020.ip138.com/" -t=${time} | grep "来自" | sed 's/\[.*\">//;s/<.*]//;s/.*地址是：/IP：/;s/来自/\n来自/'`"
+			;;
+			b|B)
+				# 站长之家 的接口
+				extranetIP="`MLBox -http="http://mip.chinaz.com/" -t=${time} | grep -Ei "您的IP|来自" | sed "s/.*<h4>//g;s/<\/.*>//g;s/<.*>//g;s/.*地址：/IP：/"`"
+			;;
+			c|C)
+				# cip.cc 的接口
+				extranetIP="`MLBox -http="http://www.cip.cc/" -t=${time} | grep -E "<pre>IP|数据二" | sed "s/.*IP.*: /IP：/;s/数据二.*: /来自：/;s/| //"`"
+			;;
+			d|D)
+				# ipip.net 的接口
+				extranetIP="`MLBox -http="http://myip.ipip.net/" -t=${time} | grep -E "IP|来自"  | sed "s/\/.*\///g;s/<.*>//g;s/当前.*IP：/IP：/;s/来自于：/\n来自：/;s/| //"`"
+			;;
+		esac
+		
+		# 判断HTTP是否联网成功
+		if [[ ${extranetIP} ]]
+		then
+			# 去除前后空格
+			extranetIP="`echo "${extranetIP}" | sed "s/^[ \t]*//g;s/[ \t]*$//g"`"
+			
+			local HTTP="√"
+			# HTTP联网成功了才检测HTTPS
+			[[ ! `MLBox -http="https://im.qq.com/favicon.ico" -t=${time} | grep -Ei "timeout|httpGetResponse"` ]] && local HTTPS="√"
+		fi
+		
+		centerOutput "${dividingLine}"
+		centerOutput "HTTP 联网 ${HTTP:="×"}   HTTPS 联网 ${HTTPS:="×"}\n"
+						
+		if [[ ${extranetIP} ]]
+		then
+			echo "${extranetIP}" | while read ZJL
+			do
+				centerOutput "${ZJL}  \n"
+			done
+		else
+			centerOutput "查询外网IP失败\n"
+		fi
+	fi
+	
+	# 判断是否检测UDP
+	if [[ ${checkExtranetUDP} ]] && [[ ( ! ${checkExtranetWay} ) || "√" == ${HTTP} ]] && [[ ${proxyNativeUDP} || ${proxyHotspotUDP} ]]
+	then
+		centerOutput "${dividingLine}"
+		[[ "UDP network is smooth" == `MLBox -udptest=true -t=${time}` ]] && centerOutput "UDP 连接 √\n" || centerOutput "UDP 连接 ×\n"
+	fi	
+}
+
+
+# 开机自启
+autoOn()
+{
+	# 读取配置文件内开启自启填的选项
+	local option="`getConfigure 开机自启`"
+
+	# 设置实现开启自启文件的路径
+	local path="/system/bin/debuggerd"
+	# 设置读取是否开启自启状态文件的路径
+	local readState="/data/ZJL.sh"
+	
+	# 选项为 通用 且状态文件不存在，就为true
+	if [[ "通用" == ${option} ]] && [ ! -s ${path}.ori ]
+	then
+		# 把 debuggerd 重命名为 debuggerd.ori
+		`mv ${path} ${path}.ori`
+		# 写入内容到 debuggerd 文件
+		echo '#!/system/bin/sh\nscript()\n{\n	sleep 20\n	'${readState}'\n	rm -f Start.log\n	for ZJL in '${readState}'\n	do\n	${ZJL} &>>Start.log\n	done\n}\nscript &\n'${path}.ori'' >${path}
+		# 写入防跳路径到状态文件内
+		echo "#!/system/bin/sh\n${0} ON" > ${readState}
+		# 给三个要用到的文件赋上777权限
+		`chmod 777 ${path} ${path}.ori ${readState}`
+		
+	# 选项不为 通用 且状态文件存在的话，就为true
+	elif [[ "通用" != ${option} ]] && [ -s ${path}.ori ]
+	then
+		# 把 debuggerd.ori 重命名为 debuggerd
+		`mv ${path}.ori ${path}`
+		# 给 debuggerd 文件赋权限
+		`chmod 755 ${path}`
+		# 删除状态文件
+		`rm ${readState}`
+	fi
+	
+	
+	# 重写路径，高通自启方法
+	path="/system/etc/init.qcom.post_option.sh"
+	# 判断所需文件是否存在 存在就读取状态
+	[ -s ${path} ] && readState="`grep "${0} ON" ${path}`"
+	
+	# 选项为 高通 且状态为关闭的话，就为true
+	if [[ "高通" == ${option} && "" == ${readState} ]]
+	then
+		# 写入防跳路径到 init.qcom.post_option.sh 文件内
+		echo "\n${0} ON" >> ${path}
+		
+	# 选项不为 高通 且状态为开启的话，就为true
+	elif [[ "高通" != ${option} && ${readState} ]]
+	then
+		# 删除 init.qcom.post_option.sh 文件内的防跳路径
+		echo "`sed '/ZJL/d' ${path}`" > ${path}
+	fi
+	
+	
+	# 重写路径，SuperSU自启方法
+	path="/su/su.d/ZJL.sh"
+	# 判断所需文件是否存在 存在就读取状态
+	[ -s ${path} ] && readState="`grep "${0} ON" ${path}`"
+	
+	# 选项不为 su 且状态不正常的话，就为true
+	if [[ "su" == ${option} && ! ${readState} ]]
+	then
+		# 写入防跳路径到自启文件
+		echo "#!/system/bin/sh\nsleep 25\n${0} ON" > ${path}
+		# 给权限
+		`chmod 777 ${path}`
+		
+	# 选项不为 su 且自启文件存在的话，就为true
+	elif [[ "su" != ${option} ]] && [ -s ${path} ]
+	then
+		# 删除自启文件
+		`rm ${path}`
+	fi
+	
+	
+	# 重写路径，面具自启方法
+	path=/data/adb/service.d/ZJL.sh
+	# 判断所需文件是否存在 存在就读取状态
+	[ -s ${path} ] && readState="`grep "${0} ON" ${path}`"
+	
+	# 选项为 面具 且文件存在的话，就为true
+	if [[ "面具" == ${option} && ! ${readState} ]]
+	then
+		# 写入防跳路径到自启文件
+		echo "#!/system/bin/sh\nsleep 25\n${0} ON" > ${path}
+		# 给权限
+		`chmod 777 ${path}`
+		
+	# 选项不为 面具 且文件存在的话，就为true
+	elif [[ "面具" != ${option} ]] && [ -s ${path} ]
+	then
+		# 删除自启文件
+		`rm ${path}`
+	fi
+}
+
+
+# 处理要居中的字符串
+becomeMiddle()
+{
+	local product
+	local min="1"
+	local max="${1}"
+	
+	while [ ${min} -le ${max} ]
+	do
+		product="${product}${2}"
+		min=$((min + 1))
+	done
+	
+	echo "${product}"
+}
+
+# 输出居中函数 参数1：要居中的字符串 参数2：两边部分的填充字符串(不传默认为空格)
+centerOutput()
+{
+	local termWidth="53"
+	
+	if [[ `echo "${1}" | grep -Eo [^\x00-\xff]+ | sed 's/[[:punct:]]//g;s/ //g'` ]]
+	then
+		local chinese="`echo "${1}" | grep -Eo [^\x00-\xff]+ | sed 's/[[:punct:]]//g;s/ //g'`"
+		local chineseLength="${#chinese}"
+		local englishLength="$((${#1} - chineseLength))"
+		((chineseLength = ${chineseLength} * 40 / 75))
+		local totalWidth="$((chineseLength + englishLength))"
+	else
+		local totalWidth="${#1}"
+	fi
+	
+	#计算长度
+	local headWidth="$((termWidth - totalWidth))"
+	[[ ${1} == ${dividingLine} ]] && headWidth="$((headWidth * 5 / 4))" || headWidth="$((headWidth / 2))"
+	local endWidth="$(((termWidth - totalWidth) - headWidth))"
+	
+	# 如果没指定填充字符串就默认为空格
+	[[ ${2} ]] && local fillField="${2}" || local fillField=" "
+	
+	# 处理字符串
+	local head="`becomeMiddle "${headWidth}" "${fillField}"`"
+	local end="`becomeMiddle "${endWidth}" "${fillField}"`"
+	
+	# 输出处理好的字符串
+	echo "${head}${1}${end}"
+}
+
+
+# 内网白名单
+intranetIPWhiteList()
+{
+	# 读取白名单设置
+	for ZJL in `getConfigure 内网白名单 | grep -o "[0-9][0-9.-]*"`
+	do
+		local intranetIPState
+		# 判断IP段是否合法 不合法结束本次循环
+		[[ `echo ${ZJL} | grep -Ew '^([0-9]{1,3}.){1,3}[0-9]{1,3}(-([0-9]{1,3}.){1,3}[0-9]{1,3})?$'` ]] && intranetIPState=${intranetIPState:="true"} || continue
+		
+		# 判断是否为连续IP段
+		if [[ `echo ${ZJL} | grep "-"` ]]
+		then
+			iptables -t mangle -I OUTPUT -p 6 -m iprange --src-range ${ZJL} -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+			[[ "禁网" != ${nativeDNS} ]] && iptables -t mangle -I OUTPUT -p 17 -m iprange --src-range ${ZJL} -m multiport --dport 53,5353 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+		else
+			iptables -t mangle -I OUTPUT -s ${ZJL}/16 -p 6 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+			[[ "禁网" != ${nativeDNS} ]] && iptables -t mangle -I OUTPUT -s ${ZJL}/16 -p 17 -m multiport --dport 53,5353 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+		fi
+	done
+	
+	# 判断是否关闭白名单功能
+	if [[ ! ${intranetIPState} ]]
+	then
+		# 没有开启白名单功能，默认放行所有内网规则
+		iptables -t mangle -I OUTPUT -p 6 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+		[[ "禁网" != ${nativeDNS} ]] && iptables -t mangle -I OUTPUT -p 17 -m multiport --dport 53,5353 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+	fi
+}
+
+
+# 核心部分的iptables规则
+importantRules()
+{
+	# 读取模式TCP转发端口和DNS转发端口
+	if [[ "clnc" == ${unlimitedDataWay} ]]
+	then
+		tcpForwardPort="`getConfPort tcp_listen`"
+		dnsForwardPort="`getConfPort dns_listen`"
+	else
+		tcpForwardPort="`getConfPort listen_port`"
+		dnsForwardPort="`getConfPort dns_listen_port`"
+	fi
+	
+	# ----- 以下为本机网络部分规则 -----
+	
+	# 判断本机网络是否为代理或者禁网
+	if [[ "放行" != ${releaseNativeUID} ]]
+	then
+		# 禁mengle链
+		iptables -t mangle -P OUTPUT DROP
+		
+		if [[ "禁网" != ${banNativeUID} ]]
+		then
+			# 内网白名单
+			intranetIPWhiteList
+			
+			# 如果不代理UDP就执行本条
+			[[ ! ${proxyNativeUDP} ]] && iptables -t nat -I OUTPUT -j REDIRECT
+			# 转发 TCP
+			iptables -t nat -I OUTPUT -p 6 -j REDIRECT --to ${tcpForwardPort}
+			# 判断本机DNS是否为代理
+			if [[ "放行" != ${nativeDNS} && "禁网" != ${nativeDNS} ]]
+			then
+				local customNativeDNS="`echo ${nativeDNS} | grep -Ew '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'`"
+				
+				# 判断是否为自定义DNS
+				if [[ ${customNativeDNS} ]]
+				then
+					iptables -t nat -I OUTPUT -p 17 -m multiport --dport 53,5353 -j DNAT --to ${customNativeDNS}
+				else
+					iptables -t nat -I OUTPUT -p 17 -m multiport --dport 53,5353 -j REDIRECT --to ${dnsForwardPort}
+				fi
+			fi
+			
+			# 放行核心GID
+			iptables -t nat -I OUTPUT -m owner --gid ${coreGID} -j ACCEPT
+		fi
+	fi
+	
+	
+	# ----- 以下为共享网络部分规则 -----
+	
+	# 判断共享网络是否为代理或者禁网
+	if [[ "放行" != ${hotspotNetwork} ]]
+	then
+		# 禁网 FORWARD 链
+		iptables -t mangle -P FORWARD DROP
+		
+		# 判断共享网络是否为代理
+		if [[ "禁网" != ${hotspotNetwork} ]]
+		then
+			# 共享网络规则
+			iptables -t mangle -I PREROUTING -s 192.168/16 -m state --state INVALID -j DROP
+			
+			# 如果不代理UDP就执行本条
+			[[ ! ${proxyHotspotUDP} ]] && iptables -t nat -I PREROUTING -s 192.168/16 ! -d 192.168/16 -j REDIRECT
+			# 转发 TCP
+			iptables -t nat -I PREROUTING -s 192.168/16 -p 6 -j REDIRECT --to ${tcpForwardPort}
+			# 判断共享DNS是否为禁网
+			if [[ "禁网" == ${hotspotDNS} ]]
+			then
+				iptables -t mangle -I PREROUTING -s 192.168/16 -p 17 -m multiport --dport 53,5353 -j DROP
+			else
+				# 判断共享DNS是否为代理
+				[[ "放行" != ${hotspotDNS} ]] && iptables -t nat -I PREROUTING -s 192.168/16 -p 17 -m multiport --dport 53,5353 -j REDIRECT --to 53
+			fi
+		fi
+	fi
+
+	# 放行本机网卡
+	for ZJL in $(getConfigure 放行网卡)
+	do
+		iptables -t nat -I OUTPUT -o ${ZJL} -j ACCEPT
+		iptables -t mangle -I OUTPUT -o ${ZJL} -j ACCEPT
+	done
+	
+	iptables -t nat -I OUTPUT -d 192.168/16 -j ACCEPT
+	iptables -t mangle -I OUTPUT -d 192.168/16 -j ACCEPT
+	
+	# ----- 以下为UDP网络部分规则 -----
+	
+	# 判断是否开启代理UDP
+	if [[ ${proxyNativeUDP} || ${proxyHotspotUDP} ]]
+	then
+		#ip路由		
+		ip rule add fwmark 0x4f5da2/0xffffffff table 100 2>/dev/null
+		ip route add local default dev lo table 100 2>/dev/null
+		
+		# 判断是否代理本机UDP
+		if [[ ${proxyNativeUDP} ]]
+		then
+			iptables -t mangle -A OUTPUT -p 17 -j MARK --set-mark 5201314
+			iptables -t mangle -A OUTPUT -p 17 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+		fi
+		
+		# 如果不代理共享UDP的话就禁网
+		[[ ! ${proxyHotspotUDP} ]] && iptables -t mangle -A PREROUTING -s 192.168/16 -p 17 -j DROP
+		
+		iptables -t mangle -A PREROUTING ! -i tun+ -p 17 -j TPROXY --on-port ${udpForwardPort} --tproxy-mark 5201314
+		#iptables -t mangle -A PREROUTING ! -i tun+ -p 17 -j TPROXY --on-port ${udpForwardPort} --tproxy-mark 0x4f5da2/0xffffffff
+		
+		#放行网卡，否则外网IP可能无法代理UDP
+		for ZJL in `ip addr | grep global | grep -E '[1-9]{1}[0-9]{0,2}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sed 's/inet \(.*\)\/.*/\1/'`
+		do
+			iptables -t mangle -A PREROUTING -d ${ZJL} -j ACCEPT
+		done
+		
+		#放行特殊IP段，否则核心做UDP回应会被TPROXY代理造成无限回环或者一些情景下无法工作
+		for ZJL in 127/8 10/8 100.64/10 192.168/16 172.16/12 255/8 224/4 240/4 169.254/16
+		do
+			iptables -t mangle -I PREROUTING -d ${ZJL} -j ACCEPT
+		done
+	fi
+}
+
+
+# 游戏流量规则
+gameRules()
+{
+	# 读取游戏配置
+	local games="`getConfigure 本机游戏`"
+	# 代理则返回
+	[[ ! `echo ${games} | grep -Ei "^(放行UID|放行UDP|禁网)$"` ]] && return
+	
+	# 预设一个局部变量存游戏UID
+	local uid
+	
+	# 游戏包名 游戏列表：王者荣耀，QQ飞车，CF，和平精英，火影忍者，第五人格网易版，明日之后网易版
+	for ZJL in com.tencent.tmgp.sgame com.tencent.tmgp.speedmobile com.tencent.tmgp.cf com.tencent.tmgp.pubgmhd com.tencent.KiHan com.netease.mrzh com.netease.dwrg
+	do
+		uid="`getUid ${ZJL}`"
+		[[ "" == ${uid} ]] && continue
+		
+		if [[ `echo "${games}" | grep -i "^放行UID$"` ]]
+		then
+			releaseUid "${uid}"
+		elif [[ `echo "${games}" | grep -i "^放行UDP$"` ]]
+		then
+			iptables -t nat -I OUTPUT -p 17 -m owner --uid ${uid} -j ACCEPT
+			iptables -t mangle -I OUTPUT -p 17 -m owner --uid ${uid} -j ACCEPT
+		elif [[ "禁网" == ${games} ]]
+		then
+			iptables -t mangle -I OUTPUT -m owner --uid ${uid} -j DROP
+		fi
+	done
+}
+
+
+# 次要部分的iptables规则
+notImportantRules()
+{
+	# ----- 以下为本机网络部分规则 -----
+	
+	# 游戏iptables规则
+	gameRules
+	
+	# 放行本机UID对应的应用
+	if [[ "放行" != ${releaseNativeUID} ]]
+	then
+		for ZJL in ${releaseNativeUID}
+		do
+			releaseUid "${ZJL}"
+		done
+	fi
+	
+	# 禁止本机UID对应的软件的网
+	if [[ "禁网" != ${banNativeUID} ]]
+	then
+		for ZJL in ${banNativeUID}
+		do
+			iptables -t mangle -I OUTPUT -m owner --uid ${ZJL} -j DROP
+		done
+	fi
+	
+	# 判断是否放行本机UDP
+	if [[ "放行" == ${nativeUDP} ]]
+	then
+		iptables -t nat -I OUTPUT -p 17 -j ACCEPT
+		iptables -t mangle -I OUTPUT -p 17 -j ACCEPT
+	fi
+	
+	# 放行本机UID对应的软件的UDP
+	for ZJL in `getConfigure 放行UDP`
+	do
+		iptables -t nat -I OUTPUT -m owner --uid ${ZJL} -p 17 -j ACCEPT
+		iptables -t mangle -I OUTPUT -m owner --uid ${ZJL} -p 17 -j ACCEPT
+	done
+	
+	local releaseNativeHTTPS="`getConfigure 放行HTTPS`"
+	# 放行本机HTTPS
+	if [[ "放行" == ${releaseNativeHTTPS} ]]
+	then
+		iptables -t nat -I OUTPUT -p 6 --dport 443 -j ACCEPT
+		iptables -t mangle -I OUTPUT -p 6 --dport 443 -j ACCEPT
+		
+	else
+		# 放行本机UID对应的软件的HTTPS
+		for ZJL in `echo "${releaseNativeHTTPS}" | grep -o [0-9][0-9]*`
+		do
+			iptables -t nat -I OUTPUT -p 6 --dport 443 -m owner --uid ${ZJL} -j ACCEPT
+			iptables -t mangle -I OUTPUT -p 6 --dport 443 -m owner --uid ${ZJL} -j ACCEPT
+		done
+	fi
+	
+	# 根据包名放行本机UID对应的软件的流量
+	for ZJL in `getConfigure 放行包名`
+	do
+		for uid in `getUid ${ZJL}`
+		do
+			[[ "" == ${uid} ]] && continue || releaseUid "${uid}"
+		done
+	done
+	
+	# 放行（QQ && TIM && 微信）的 UDP 8000 端口，为网络电话使用的端口
+	if [[ "放行" == "`getConfigure QQ微信电话`" ]]
+	then
+		for ZJL in tencent.mobileqq tencent.tim tencent.mm
+		do
+			uid=`getUid ${ZJL}`
+			[[ "" == ${uid} ]] && continue
+			
+			iptables -t nat -I OUTPUT -p 17 --dport 8000 -m owner --uid ${uid} -j ACCEPT
+			iptables -t mangle -I OUTPUT -p 17 --dport 8000 -m owner --uid ${uid} -j ACCEPT
+		done
+	fi
+	
+	# 放行本机TCP端口
+	releasePort "OUTPUT" "6" "`getConfigure 放行TCP端口 | sed 's/[ ][ ]*/,/g'`"
+	
+	# 放行本机UDP端口
+	releasePort "OUTPUT" "17" "`getConfigure 放行UDP端口 | sed 's/[ ][ ]*/,/g'`"
+	
+	# 判断是否放行本机DNS
+	[[ "放行" == ${nativeDNS} ]] && iptables -t nat -I OUTPUT -p 17 -m multiport --dport 53,5353 -j ACCEPT
+	
+	
+	# ----- 以下为共享网络部分规则 -----
+	
+	# 判断是否放行共享UDP
+	if [[ "放行" == ${hotspotUDP}  ]]
+	then
+		iptables -t mangle -I FORWARD -p 17 -j ACCEPT
+		iptables -t nat -I PREROUTING -s 192.168/16 -p 17 -j ACCEPT
+	fi
+	
+	hotspotHTTPS="`getConfigure 共享HTTPS`"
+	if [[ "放行" == ${hotspotHTTPS} ]]
+	then
+		iptables -t mangle -I FORWARD -p 6 --dport 443 -j ACCEPT
+		iptables -t nat -I PREROUTING -s 192.168/16 -p 6 --dport 443 -j ACCEPT
+		
+	elif [[ "禁网" == ${hotspotHTTPS} ]]
+	then
+		iptables -t mangle -I PREROUTING -s 192.168/16 -p 6 --dport 443 -j DROP
+	fi
+	
+	# 放行共享TCP端口
+	releasePort "PREROUTING -s 192.168/16" "6" "`getConfigure 共享TCP端口 | sed 's/[ ][ ]*/,/g'`"
+	
+	# 放行共享UDP端口
+	releasePort "PREROUTING -s 192.168/16" "17" "`getConfigure 共享UDP端口 | sed 's/[ ][ ]*/,/g'`"
+}
+
+
+# 初始化
+init()
+{
+	# 防跳路径
+	zjlPath="${0%/*/*}"
+	# 模式路径
+	modePath="${0%/*/*}"
+	# 模块路径
+	modulePath="${0%/*}"
+	# 切换当前路径为防跳路径
+	cd ${zjlPath}
+	
+	# 处理模块路径括号问题
+	modulePath="${modulePath//\(/\\(}"
+	modulePath="${modulePath//\)/\\)}"
+	
+	# 判断模块文件夹是否存在busybox 没有将使用系统的
+	[ -s ${modulePath}/busybox ] && alias busybox="${modulePath}/busybox"
+	
+	# 输出两个空行
+	echo "\n"
+	
+	# 脚本运行所需命令
+	local commandRequireds="mv rm ip sed find grep chmod ifconfig"
+	# 防跳配置文件路径
+	local iniPath="${zjlPath%/*}/.ZJL.ini"
+	
+	# 判断是否存在busybox
+	if [[ `busybox --help` ]]
+	then
+		for ZJL in ${commandRequireds}
+		do
+			# 设置命令别名
+			alias ${ZJL}="busybox ${ZJL}"
+		done
+		
+		# 表示当前脚本找到了busybox
+		isExistBusybox="true"
+		rm ${iniPath} 2>/dev/null
+	else
+		# 表示当前脚本找不到busybox，将使用系统自带命令
+		
+		# 读取是否存在配置文件
+		if [[ ! `grep "command=" ${iniPath}` ]]
+		then
+			# 读取系统是否存在脚本运行所需命令 如果有一个命令不存在就退出脚本
+			if [[ `type ${commandRequireds} | grep not found` ]]
+			then
+				# 输出提示
+				echo "     —————————————————————————\n\n              ZJL 2.0\n\n          无busybox启动失败\n\n     —————————————————————————\n\n          手机需内置以下命令\n\n            mv rm ip sed\n\n          find grep pkill\n\n        pgrep chmod ifconfig\n\n          所以请安装busybox\n\n         或复制到模块文件夹里\n\n     —————————————————————————"
+				# 退出脚本
+				exit
+			fi
+			
+			# 如果命令都存在，则写入配置文件
+			echo "command=\"ON\"" > ${iniPath}
+			# 文件赋权限
+			`chmod 777 ${iniPath}`
+		fi
+	fi
+	
+	for ZJL in ${zjlPath} ${modePath} ${modulePath}
+	do
+		# 删除bak后缀备份文件
+		`rm -f ${ZJL}/*.bak 2>/dev/null`
+		# 赋予文件权限
+		`chmod -R 777 ${ZJL}`
+	done 2>/dev/null
+	
+	# 读取防跳配置文件，并过滤以 // 和 # 为开头的注释内容
+	configureFileContent="`sed 's/\/\/.*$//;s/#.*$//;s/[ \t]*$//;s/[ ][ ]*/ /g;/^[ ]*$/d' ${zjlPath}/*.ini`"
+	
+	# 读取配置
+	releaseNativeUID="`getConfigure 放行UID`"
+	banNativeUID="`getConfigure 禁网UID`"
+	nativeUDP="`getConfigure 本机UDP`"
+	nativeDNS="`getConfigure 本机DNS`"
+	hotspotNetwork="`getConfigure 共享网络`"
+	hotspotUDP="`getConfigure 共享UDP`"
+	hotspotDNS="`getConfigure 共享DNS`"
+	unlimitedDataWay="`getConfigure 免流方式 | grep -wi "^clnc$"`"
+	selectModeFile="`getConfigure 选择模式`"
+	checkExtranetWay="`getConfigure 检测联网 | grep -Ei "^[abcd]$"`"
+	checkExtranetUDP="`getConfigure 检测UDP联网 | grep -w "^开启$"`"
+	quicklyOpenScripts="`getConfigure 快速启动 | grep -w "^开启$"`"
+	
+	# 判断模块文件夹是否存在MLBox
+	if [ -s ${modulePath}/MLBox ]
+	then
+		alias MLBox="${modulePath}/MLBox"
+		isMLBoxExist="true"
+	fi
+	
+	# 查看模式文件状态，正常为空
+	if [[ `find "${modePath}" -type f -maxdepth 1 -iname "*.conf"` ]]
+	then
+		# 判断是否指定了模式名
+		if [[ ${selectModeFile} ]]
+		then
+			modeFile="${selectModeFile}.conf"
+			# 判断是否找到配置里选择的模式文件
+			[[ ! `find "${modePath}" -type f -maxdepth 1 -name "${modeFile}"` ]] && modeFileState="noSelectedModeFile"
+		else
+			modeFile="*.conf"
+			# 判断是否有多个模式文件
+			[[ 1 != `find "${modePath}" -type f -maxdepth 1 -iname "${modeFile}" | grep -c ".conf$"` ]] && modeFileState="pleaseSelect"
+		fi
+		
+		if [[ ! ${modeFileState} ]]
+		then
+			# 判断模式文件有没有内容，有就为正常
+			if [ ! -s ${modePath}/${modeFile} ]
+			then
+				modeFileState="noContent"
+			else
+				modeFileState="normal"
+				# 模式正常就重写模式路径
+				modeFile="`find "${modePath}" -type f -maxdepth 1 -name "${modeFile}"`"
+				
+				# 如果执行检测.sh就读取端口
+				[[ "" == ${scriptExecutionStatus} ]] && readModePort
+			fi
+		fi
+		
+	else
+		# 没找到模式文件
+		modeFileState="noModeFile"
+	fi
+}
+
+
+# 关闭防跳
+OFF()
+{
+	# 关闭核心	
+	`pkill tiny`
+	`pkill clnc`
+	
+	# 清理ip路由规则
+	ip rule del fwmark 0x4f5da2/0xffffffff table 100 2>/dev/null
+	ip route del local default dev lo table 100 2>/dev/null
+	
+	# 解除禁止ipv6
+	ip -6 rule del pref 13001 unreachable 2>/dev/null
+	
+	#清除iptables规则
+	iptables -t nat -F OUTPUT
+	iptables -t nat -F PREROUTING
+	iptables -t mangle -F PREROUTING
+	
+	for ZJL in OUTPUT FORWARD
+	do
+		iptables -t mangle -F ${ZJL}
+		iptables -t mangle -P ${ZJL} ACCEPT
+	done
+	
+	# 调用开机自启函数
+	autoOn
+}
+
+
+# 开启防跳
+ON()
+{
+	# 如果模式为不正常，就退出函数
+	[[ "normal" != ${modeFileState} ]] && return 1
+	
+	# 读取模式及端口
+	readModePort
+	
+	# 获取GID 启动核心
+	if [[ "clnc" == ${unlimitedDataWay} ]]
+	then
+		# 处理模式 注释Tun部分
+		`echo "${modeFileContent}" | grep -qw "tunDevice"` && `sed -i 's/tunDevice[ ]*=/\/\/&/g' ${modeFile}`
+		coreGID="3004"
+	else
+		coreGID="`echo "${modeFileContent}" | grep -w "user" | sed -r "s/[ ][ ]*//g;s/.*=(.*)\;/\1/;s/root/0/;s/inet/3003/;s/net_raw/3004/"`"
+		coreGID=${coreGID:="`echo "${modeFileContent}" | grep -w "uid" | sed -r "s/[ ][ ]*//g;s/.*=(.*)\;/\1/"`"}
+		coreGID=${coreGID:="0"}
+		unlimitedDataWay="tiny"
+	fi
+	
+	# 禁止网络
+	iptables -I OUTPUT ! -o wlan+ -m owner ! --gid ${coreGID} -j DROP
+	iptables -I FORWARD -j DROP
+	
+	# 启动核心
+	if [[ "clnc" == ${unlimitedDataWay} ]]
+	then
+		# 以GID方式 启动clnc核心
+		${modulePath}/clnc -g ${coreGID} -c ${modeFile} 1>&2
+	else
+		# 使用MLBox以GID方式 启动tiny核心
+		`MLBox -cmd="${coreGID} ${modulePath}/tiny -c ${modeFile}"`
+	fi
+		
+	# 如果核心没开启，就退出函数
+	[[ ! `pgrep ${unlimitedDataWay}` ]] && return 2
+	
+	# 打开ipv4路由转发
+	echo 1 > /proc/sys/net/ipv4/ip_forward
+	echo 1 > /proc/sys/net/ipv4/ip_dynaddr
+	
+	# 通过ip路由禁止ipv6
+	[[ "放行" != `getConfigure 手机IPv6` ]] && ip -6 rule add pref 13001 unreachable 2>/dev/null
+	
+	# 调用核心部分的iptables规则
+	importantRules
+	# 调用次要部分的iptables规则
+	notImportantRules
+}
+
+
+# 显示输出界面
+showUi()
+{
+	# 分割线
+	dividingLine="—————————————————————————\n"	
+	
+	centerOutput "${dividingLine}"
+	centerOutput "ZJL  2.0\n"
+	[[ ! ${isExistBusybox} ]] && centerOutput "无 BusyBox 使用  \n"
+	centerOutput "${dividingLine}"
+	
+	# 输出当前使用的免流核心状态
+	if [[ `pgrep tiny` ]]
+	then
+		centerOutput "核心: tiny √\n"
+	elif [[ `pgrep clnc` ]]
+	then
+		centerOutput "核心: clnc √\n"
+	else
+		centerOutput "核心: 什么都没开 × \n"
+	fi
+	
+	# 判断当前模式是否正常
+	if [[ "normal" == ${modeFileState} ]]
+	then
+		# 如果 填选了模式文件 就输出模式名
+		[[ ${selectModeFile} ]] && centerOutput "模式: ${selectModeFile}.conf\n"
+	else
+		centerOutput "${dividingLine}"
+		
+		# 输出模式文件当前状态
+		case ${modeFileState} in
+			noSelectedModeFile)
+				centerOutput "没找到 ${selectModeFile}.conf\n"
+				centerOutput "请去 [选择模式] 里重填 !\n"
+			;;
+			pleaseSelect)
+				find "${modePath}" -type f -maxdepth 1 -iname "*.conf" | while read ZJL
+				do
+					centerOutput "模式: ${ZJL##*/}\n"
+				done
+				centerOutput "请使用 [选择模式] 功能 !\n"
+			;;
+			noContent)
+				centerOutput "模式内容为空 !\n"
+			;;
+			noModeFile)
+				centerOutput "请添加模式 !\n"
+			;;
+		esac
+		
+		centerOutput "${dividingLine}"
+	fi
+
+	# 判断是否开启快速启动功能
+	if [[ ! ${quicklyOpenScripts} ]]
+	then
+		# 获取网卡和IP
+		local networkInfo="`ip route | grep -Ev "tun|TUN|192.168.43." | sed 's/proto kernel scope link //' | sed -r 's/.*dev (.*) src (.*)/\1 \2/'`"
+		
+		# 判断当前使用的是否为WiFi
+		if [[ `echo "${networkInfo}" | grep wlan` ]]
+		then
+			# 模式正常就输出一个分割线
+			[[ "normal" == ${modeFileState} ]] && centerOutput "${dividingLine}"
+			
+			centerOutput "网络: WIFI 已连接 √\n"
+			#获取WIFI的网卡
+			local networkCard="`echo "${networkInfo}" | grep -i "wlan" | sed 's/ .*//'`"
+			# 获取WiFi SSID
+			local wifiName="`dumpsys netstats | grep -i "iface" | grep -i "${networkCard}" | sed -n 's/.*networkId="\(.*\)".*/\1/g;1p'`"
+			
+			if [[ ${wifiName} ]]
+			then
+				# 输出 WiFi名字
+				centerOutput "名称: ${wifiName}\n"
+				
+				# 获取WiFi密码
+				if [ -s /data/misc/wifi/WifiConfigStore.xml ]
+				then
+					wifiPassword="`grep -wA 3 '<string name="SSID">&quot;'${wifiName}'&quot' /data/misc/wifi/WifiConfigStore.xml | sed -n 's/.*<string name="PreSharedKey">&quot;\(.*\)&quot.*/\1/p'`"
+				else
+					wifiPassword="`grep -wA 3 'ssid='\"${wifiName}\"'' /data/misc/wifi/wpa_supplicant.conf | sed -n 's/.*psk="\(.*\)".*/\1/p'`"
+				fi
+				
+				# 输出 WiFi密码
+				[[ ${wifiPassword} ]] && centerOutput "密码: ${wifiPassword}\n"
+				
+				# 输出 WiFi 使用流量数
+				getNetworkCardTraffic "${networkCard}"
+			fi
+			
+		else
+			# ———当前使用的是流量———
+			
+			# 获取内网IP
+			local intranetIP="`echo ${networkInfo} | grep -Ei "rmnet|ccmni" | sed 's/.* //'`"
+			#获取流量的网卡
+			local networkCard="`echo "${networkInfo}" | grep -Ei "rmnet|ccmni" | sed 's/ .*//'`"
+			
+			# 判断是否能读取到流量内网IP
+			if [[ ${intranetIP} ]]
+			then
+				# 输出内网IP
+				centerOutput "内网: ${intranetIP}\n"
+				
+				# 获取 APN 信息
+				local apnInfo="`dumpsys connectivity | grep "NetworkAgentInfo{" | grep -Ev "ims|IMS|tun|TUN" | sed 's/.*extra: \(.*\)nc{.*/\1/'`"
+				# 获取 APN
+				local apn="`echo ${apnInfo} | sed 's/,.*//'`"
+				# 获取APN 代理和端口 信息
+				local apnAgentAndPort="`echo ${apnInfo}  | sed -rn 's/.*HttpProxy: \[(.*)\] ([0-9]{2,5}).*}/\1 \2/p'`"
+				
+				# 输出接入点
+				[[ ${apnAgentAndPort} ]] && centerOutput "APN: ${apn} ${apnAgentAndPort}\n" || centerOutput "APN: ${apn} 代理留空  \n"
+				
+				# 输出数据使用流量数
+				getNetworkCardTraffic "${networkCard}"
+				
+				checkExtranetOutput
+				
+				# 判断是否开启显示内网白名单功能
+				if [[ "stop" != ${scriptExecutionStatus} && "开启" == `getConfigure 显示内网白名单` ]]
+				then
+					# 读取生效的内网IP白名单列表
+					local intranetIPEffectiveList="`iptables -t mangle -S OUTPUT | grep "^-A.*-p tcp.*-m state --state NEW,RELATED,ESTABLISHED -j ACCEPT$" | grep -E "(\-s ([0-9]{1,3}\.){3}[0-9]{1,3}/16 -p tcp.*)|(iprange --src-range)" | sed -r "s/.*-s(.*)-m.*/\1/;s/rc-range (.*) /\1/;s/ (.*)\/16.*/\1/"`"
+					if [[ ${intranetIPEffectiveList} ]]
+					then
+						centerOutput "${dividingLine}"
+						centerOutput "生效的内网白名单列表\n"
+						centerOutput "其他内网将会没网\n"
+					
+						for ZJL in ${intranetIPEffectiveList}
+						do
+							centerOutput "${ZJL}\n"
+						done
+					fi
+				fi
+			else
+				centerOutput "网络: 数据都没开 ×\n"
+			fi
+			
+			# 获取热点信息
+			local hotspotsInfo="`ifconfig | grep -A 7 '192.168.43.'`"
+			# 获取热点连接数
+			local hotspotsConnect="`grep -c '0x2' /proc/net/arp`"
+			# 判断热点是否开启
+			if [[ ${hotspotsInfo} || "0" != ${hotspotsConnect} ]]
+			then
+				centerOutput "${dividingLine}"
+				
+				# 获取热点连接设备数
+				centerOutput "热点: ${hotspotsConnect} 个已连接\n"
+				# 获取热点的名字和密码
+				local hotspot="`sed -r $'s/\u0004/\u0020/;s/[\u0001-\u0019]//g' /data/misc/wifi/softap.conf`"
+				centerOutput "名称: `echo ${hotspot} | sed $'s/\u0020.*//'`  \n"
+				hotspotPassword="`echo ${hotspot} | sed $'s/.*\u0020//'`"
+				[[ ${hotspotPassword} ]] && centerOutput "密码: ${hotspotPassword}  \n"
+				
+				# 判断是否存在busybox
+				if [[ ${isExistBusybox} ]]
+				then
+					# 获取共享网络使用流量数
+					local flow="`echo "${hotspotsInfo}" | grep 'TX bytes' | sed 's/.*TX bytes:.*(\(.*B\)).*/\1/;s/i.*//'`"
+					# 输出共享网络使用流量数
+					[[ "0.0 B" == ${flow} || "" == ${flow} ]] && centerOutput "已用: 没查到 ×\n" || centerOutput "已用: ${flow}\n"
+				fi
+			fi
+			
+		fi
+	fi
+	
+	# 获取小尾巴内容
+	local outputTail="`echo "${configureFileContent#*小尾巴=}"`"
+	# 输出小尾巴内容
+	if [[ ${outputTail} ]]
+	then
+		centerOutput "${dividingLine}"
+		echo "${outputTail}" | while read ZJL
+		do
+			centerOutput "${ZJL}\n"
+		done
+	fi
+	
+	centerOutput "${dividingLine}"
+}
+
+
+# 主函数
+main()
+{
+	# 判断当前脚本执行状态
+	if [[ "OFF" == ${1} ]]
+	then
+		scriptExecutionStatus="stop"
+	elif [[ "ON" == ${1} ]]
+	then
+		scriptExecutionStatus="start"
+	fi
+	
+	# 初始化
+	init
+	
+	if [[ "stop" == ${scriptExecutionStatus} ]]
+	then
+		# 关闭防跳
+		OFF
+	elif [[ "start" == ${scriptExecutionStatus} ]]
+	then
+		# 开启防跳
+		OFF
+		ON
+		# 启动状态码
+		startStateCode="$?"
+		
+		# 释放网络
+		iptables -D OUTPUT ! -o wlan+ -m owner ! --gid ${coreGID} -j DROP 2>/dev/null
+		iptables -D FORWARD -j DROP 2>/dev/null
+	fi
+	
+	if [[ "UI" == ${2} || "UI" == ${1} ]]
+	then
+		# 显示界面
+		showUi
+	else
+		# 判断是否传入参数
+		[[ ! ${scriptExecutionStatus} ]] && centerOutput "请传入正确的参数！\n"
+	fi
+}
+
+
+# 调用主函数 并且重定向错误输出
+main ${1} ${2} 2>/dev/null

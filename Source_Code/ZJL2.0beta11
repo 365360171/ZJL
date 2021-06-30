@@ -1,0 +1,880 @@
+#!/system/bin/sh
+
+cd ${0%/*/*}
+
+rm -f *.bak */*.bak 2>/dev/null
+chmod -R 777 * 2>/dev/null
+
+if [ -s */busybox ]
+then
+	BU=*/busybox
+else
+	BU=busybox
+fi
+
+if [ -s */iptables ]
+then
+	IPT=*/iptables
+else
+	IPT=iptables
+fi
+
+echo "\n\n"
+
+if [[ `${BU} --help` ]]
+then 
+	for ZJL in ip ls mv rm cat sed grep chmod pkill pgrep ifconfig;
+	do
+		alias ${ZJL}="${BU} ${ZJL}"
+	done
+else
+	JCBU=OFF
+	
+	if [[ `sed -n 's/ML=//p' /data/ZJL.sh` != "ON" ]]
+	then
+		for ZJL in ip ls mv rm cat sed grep chmod pkill pgrep
+		do
+			if [[ `type ${ZJL}` == "${ZJL} not found" ]]
+			then
+				echo "    ────────────────\n\n              ZJL 2.0\n\n          无busybox启动失败\n\n          手机需内置以下命令\n\n      ip ls mv rm cat sed curl\n       grep chmod pkill pgrep\n\n          所以请安装busybox\n\n         或复制到模块文件夹里\n\n    ────────────────"
+				exit
+			fi
+		done
+		
+		echo "ML=ON" > /data/ZJL.sh
+		chmod 777 /data/ZJL.sh
+	fi
+fi 2>/dev/null
+
+IN="${IPT} -t nat"
+IM="${IPT} -t mangle"
+OUT="OUTPUT"
+FOR="FORWARD"
+PRE="PREROUTING"
+S192="-s 192.168/16"
+D192="-d 192.168/16"
+PS192="${PRE} ${S192}"
+NERA="-m state --state NEW,ESTABLISHED,RELATED -j ACCEPT"
+
+DQPZ=`cat *.ini` 2>/dev/null
+
+PZ=`echo "${DQPZ}" | sed 's/\/\/.*$//;s/[ ][ ]*/ /g;s/[ \t]*$//;/^$/d'`
+
+DNS=`echo "${PZ}" | sed -n 's/DNS自定义=[ \t]*//p'`
+
+GXD=`echo "${PZ}" | sed -n 's/共享DNS=[ \t]*//p'`
+
+MLFS=`echo "${PZ}" | sed -n 's/免流方式=[ \t]*//p'`
+
+ZLIP=`echo "$MLFS" | grep -Eo "[0-9.]+"`
+
+ZLDK=`echo "${PZ}" | sed -n 's/直连端口=[ \t]*//p' | grep -o [0-9][0-9]*`
+
+XZMS=`echo "${PZ}" | sed -n 's/选择模式=[ \t]*//p'`
+
+JCLW=`echo "${PZ}" | sed -n 's/检测联网=[ \t]*//p'`
+
+XWB=`echo "${DQPZ#*小尾巴=}"`
+
+if [[ ${XZMS} ]]
+then
+	MS=${XZMS}.conf
+else
+	MS=*.conf
+fi
+
+if [[ `ls *.conf` ]]
+then
+	if [[ ${XZMS} ]]
+	then
+		if `ls ${MS}`
+		then
+			JCMS=WZD
+		elif [ ! -s ${MS} ]
+		then
+			JCMS=MNR
+		fi
+	else
+		if echo *.conf | grep -q ' '
+		then
+			JCMS=QXZ
+		elif [ ! -s ${MS} ]
+		then
+			JCMS=MNR
+		fi
+	fi
+else
+	JCMS=MMS
+fi 2>/dev/null
+
+if [[ ${DNS} == "放行" || ${DNS} == "禁网" ]] && [[ ${GXD} == "放行" || ${GXD} == "禁网" ]]
+then
+	ZLDNS=OFF
+fi
+
+if ${ZLDK}
+then
+	ZLDK=80
+fi
+
+if [[ $1 == "OFF" ]]
+then
+	SJ=`echo "${PZ}" | sed -n 's/重启数据=[ \t]*//p'`
+	
+	if [[ ${SJ} == "开启" ]]
+	then
+		svc data disable
+	fi
+	
+	for ZJL in tiny pdnsd CProxy redsocks2 localproxy
+	do
+		pkill ${ZJL}
+	done
+	
+	sleep 0.1
+	
+	${IN} -F ${PRE}
+	${IN} -F ${OUT}
+	
+	for ZJL in ${PRE} ${OUT} ${FOR}
+	do
+		${IM} -P ${ZJL} ACCEPT
+		${IM} -F ${ZJL}
+	done
+	
+	${IN} -A ${PRE} -j oem_nat_pre
+	
+	ZQ=`echo "${PZ}" | sed -n 's/开机自启=[ \t]*//p'`
+	
+	LJA=/system/bin/debuggerd
+	ZQA=/data/ZQ.sh
+	
+	if [[ ${ZQ} == "A" ]] && [ ! -s ${LJA}.ori ]
+	then
+		mv ${LJA} ${LJA}.ori
+		echo '#!/system/bin/sh\nscript()\n{\n	sleep 15\n	'${ZQA}'\n	rm -f Start.log\n	chmod 777 '${ZQA}'\n	for ZJL in '${ZQA}'\n	do\n	${ZJL} &>>Start.log\n	done\n}\nscript &\n'${LJA}.ori'' >${LJA}
+		echo "#!/system/bin/sh\n$0 OFF ON" > ${ZQA}
+		chmod 777 ${LJA} ${LJA}.ori ${ZQA}
+		
+	elif [[ ${ZQ} != "A" ]] && [ -s ${LJA}.ori ]
+	then
+		mv ${LJA}.ori ${LJA}
+		chmod 755 ${LJA}
+		rm ${ZQA}
+	fi
+	
+	LJB=/system/etc/init.qcom.post_boot.sh
+	ZQB=`cat ${LJB} | grep "ZJL OFF ON"`
+	
+	if [[ ${ZQ} == "B" && ${ZQB} == "" ]]
+	then
+		echo "\n$0 OFF ON" >> ${LJB}
+	elif [[ ${ZQ} != "B" && ${ZQB} ]]
+	then
+		echo "`sed '/ZJL/d' ${LJB}`" > ${LJB}
+	fi
+	
+	LJC=/su/su.d/ZJL.sh
+	
+	if [[ ${ZQ} == "C" ]] && [ ! -s ${LJC} ]
+	then
+		echo "#!/system/bin/sh\n$0 OFF ON" > ${LJC}
+		chmod 777 ${LJC}
+
+	elif [[ ${ZQ} != "C" ]] && [ -s ${LJC} ]
+	then
+		rm ${LJC}
+	fi
+fi 2>/dev/null
+
+
+if [[ $2 == "ON" ]]
+then
+	if [[ ${ZLIP} ]]
+	then
+		TCPDK=`echo "${PZ}" | sed -n 's/TCP转发端口=[ \t]*//p' | grep -o [0-9][0-9]*`
+		RIP=`echo "${PZ}" | sed -n 's/TCP代理=[ \t]*//p' | grep -Eo "[0-9.]+"`
+		RDK=`echo "${PZ}" | sed -n 's/TCP端口=[ \t]*//p' | grep -o [0-9][0-9]*`
+		
+		if [[ ${TCPDK}${RIP}${RDK} ]] || [ ! -s */redsocks2.conf ]
+		then
+			if ${TCPDK}
+			then
+				TCPDK=1256
+			fi
+			
+			if ${RIP}
+			then
+				RIP=10.0.0.172
+			fi
+			
+			if ${RDK}
+			then
+				RDK=80
+			fi
+			
+			echo "base {\n	log_debug=off;\n	log_info=off;\n	log=stderr;\n	daemon=on;\n	redirector=iptables;\n}\n\nredsocks {\n	local_ip=0.0.0.0;\n	local_port=${TCPDK};\n	ip=${RIP};\n	port=${RDK};\n	type=http-connect;\n}" > ${0%/*}/redsocks2.conf
+			
+			chmod 777 */redsocks2.conf
+		fi
+		
+		*/redsocks2 -c */redsocks2.conf
+		
+		if [[ ${ZLDNS} != "OFF" ]]
+		then
+			DNSDK=`echo "${PZ}" | sed -n 's/DNS转发端口=[ \t]*//p' | grep -o [0-9][0-9]*`
+			PDNS=`echo "${PZ}" | sed -n 's/DNS代理=[ \t]*//p' | grep -Eo "[0-9.]+"`
+			
+			if [[ ${DNSDK}${PDNS} ]] || [ ! -s */pdnsd.conf ]
+			then
+				if ${DNSDK}
+				then
+					DNSDK=65053
+				fi
+				
+				if ${PDNS}
+				then
+					PDNS=119.29.29.29
+				fi
+				
+				echo "global {\n	perm_cache=4096;\n	cache_dir=/data/pdnsd;\n	server_ip=0.0.0.0;\n	server_port=${DNSDK};\n	query_method=tcp_only;\n	run_ipv4=on;\n	min_ttl=3d;\n	max_ttl=1w;\n	timeout=10;\n	daemon=on;\n}\n\nserver {\n	ip=${PDNS};\n	timeout=5;\n}" > ${0%/*}/pdnsd.conf
+				
+				chmod 777 */pdnsd.conf
+			fi
+			
+			*/pdnsd -c */pdnsd.conf
+		fi
+		
+	elif ${JCMS}
+	then
+		dqtcp_dk=^listen_port
+		if [[ $MLFS == "CProxy" ]]
+		then
+			*/CProxy ${MS}
+			dqtcp_dk="tcp_listen"
+			udp_dk=`grep udp_listen ${MS} | grep -o [0-9][0-9]*`
+		elif [[ $MLFS == "localproxy" ]]
+		then
+			*/localproxy -c ${MS}
+		else
+			*/tiny -c ${MS}
+		fi
+		
+		tcp_dk=`grep ${dqtcp_dk} ${MS} | grep -o [0-9][0-9]*`
+		dns_dk=`grep dns_listen ${MS} | grep -o [0-9][0-9]*`
+	fi
+	
+	if [[ `pgrep tiny``pgrep CProxy``pgrep localproxy` ]] || [[ `pgrep redsocks2` && ( `pgrep pdnsd` || ${ZLDNS} == "OFF" ) ]]
+	then
+		BMD=`echo "${PZ}" | sed -n 's/内网白名单=[ \t]*//p' | grep -o [0-9][0-9.-]*`
+		FX=`echo "${PZ}" | sed -n 's/放行UID=[ \t]*//p' | grep -o [0-9][0-9]*`
+		JW=`echo "${PZ}" | sed -n 's/禁网UID=[ \t]*//p' | grep -o [0-9][0-9]*`
+		FU=`echo "${PZ}" | sed -n 's/放行UDP=[ \t]*//p'`
+		YX=`echo "${PZ}" | sed -n 's/放行游戏=[ \t]*//p'`
+		FS=`echo "${PZ}" | sed -n 's/放行HTTPS=[ \t]*//p'`
+		FXBM=`echo "${PZ}" | sed -n 's/放行包名=[ \t]*//p'`
+		FTCP=`echo "${PZ}" | grep 放行TCP端口 | sed 's/.*=[ \t]*//;s/[ ][ ]*/,/g'`
+		FUDP=`echo "${PZ}" | grep 放行UDP端口 | sed 's/.*=[ \t]*//;s/[ ][ ]*/,/g'`
+		IC=`echo "${PZ}" | sed -n 's/放行ICMP=[ \t]*//p'`
+		GX=`echo "${PZ}" | sed -n 's/共享网络=[ \t]*//p'`
+		GXS=`echo "${PZ}" | sed -n 's/共享HTTPS=[ \t]*//p'`
+		GTCP=`echo "${PZ}" | grep 共享TCP端口 | sed 's/.*=[ \t]*//;s/[ ][ ]*/,/g'`
+		GUDP=`echo "${PZ}" | grep 共享UDP端口 | sed 's/.*=[ \t]*//;s/[ ][ ]*/,/g'`
+		FUUID=`echo "$FU" | grep -o [0-9][0-9]*`
+		FSUID=`echo "$FS" | grep -o [0-9][0-9]*`
+		ICUID=`echo "$IC" | grep -o [0-9][0-9]*`
+		DNSIP=`echo "$DNS" | grep -Eo "[0-9.]+"`
+
+		echo 1 > /proc/sys/net/ipv4/ip_forward
+		echo 1 > /proc/sys/net/ipv4/ip_dynaddr
+
+		if ${TCPDK}
+		then
+			TCPDK=1256
+		fi
+
+		if ${DNSDK}
+		then
+			DNSDK=65053
+		fi
+		
+		${IM} -P ${OUT} DROP
+
+		if [[ ${BMD} ]]
+		then
+			for IP in ${BMD}
+			do
+				if `echo ${IP} | grep -`
+				then
+					if [[ ${DNS} != "禁网" ]]
+					then
+						${IM} -I ${OUT} -s ${IP}/16 ${NERA}
+					else
+						${IM} -I ${OUT} -s ${IP}/16 -p 6 ${NERA} 
+					fi
+				else
+					IP1=${IP%.*}.
+					IP2=${IP#*.}
+					IP3=${IP2%-*}
+					IP4=${IP2#*-}
+
+					if [[ ${DNS} != "禁网" ]]
+					then
+						for ZJL in $(seq ${IP3} ${IP4})
+						do
+							${IM} -I ${OUT} -s ${IP1}${ZJL}/16 ${NERA}
+						done
+					else
+						for ZJL in $(seq ${IP3} ${IP4})
+						do
+							${IM} -I ${OUT} -s ${IP1}${ZJL}/16 -p 6 ${NERA}
+						done
+					fi
+				fi
+			done
+			
+		else
+			if [[ ${DNS} != "禁网" ]]
+			then
+				${IM} -I ${OUT} ${NERA}
+			else
+				${IM} -I ${OUT} -p 6 ${NERA}
+			fi
+		fi
+		
+		if [[ ${ZLIP} ]]
+		then
+			if [[ ${DNS} != "放行" && ${DNS} != "禁网" ]]
+			then
+				${IN} -I ${OUT} -p 17 --dport 53 -j REDIRECT --to ${DNSDK}
+			fi
+			
+			${IN} -I ${OUT} -p 6 ! --dport 80 -j REDIRECT --to ${TCPDK}
+			${IN} -I ${OUT} -p 6 --dport 80 -j DNAT --to ${ZLIP}:${ZLDK}
+		else
+			${IN} -I ${OUT} -j DNAT --to 127.0.0.1
+			${IN} -I ${OUT} -p 6 -j REDIRECT --to ${tcp_dk}
+			
+			if [[ ${DNS} != "放行" && ${DNS} != "禁网" ]]
+			then
+				if [[ ${DNSIP} ]]
+				then
+					${IN} -I ${OUT} -p 17 -m multiport --dport 53,5353 -j DNAT --to ${DNS}
+				else
+					${IN} -I ${OUT} -p 17 -m multiport --dport 53,5353 -j REDIRECT --to ${dns_dk}
+				fi
+			fi
+			
+			user=`grep user ${MS} | sed 's/.*=[ \t]*//;s/;//'`
+			uid=`grep uid ${MS} | grep -o [0-9][0-9]*`
+			
+			${IN} -I ${OUT} -m owner --uid ${user}${uid} -j ACCEPT
+		fi
+		
+		if [[ ${GX} != "放行" ]]
+		then
+			if ${ZLIP}
+			then
+				${IM} -P ${FOR} DROP
+			fi
+			
+			${IM} -I ${PS192} ! ${D192} -j DROP
+			
+			if [[ ${GX} != "禁网" ]]
+			then
+				if [[ ${GXD} != "禁网" ]]
+				then
+					${IM} -I ${PS192} ${NERA}
+				else
+					${IM} -I ${PS192} -p 6 ${NERA}
+				fi
+				
+				if [[ ${ZLIP} ]]
+				then
+					${IN} -I ${PS192} -p 6 --dport 80 -j DNAT --to ${ZLIP}:${ZLDK}
+					${IN} -I ${PS192} -p 6 ! --dport 80 -j REDIRECT --to ${TCPDK}
+					
+					if [[ ${GXD} != "放行" && ${GXD} != "禁网" ]]
+					then
+						${IN} -I ${PS192} -p 17 --dport 53 -j REDIRECT --to ${DNSDK}
+					fi
+				else
+					${IN} -I ${PS192} ! ${D192} -j DNAT --to 127.0.0.1
+		
+					${IN} -I ${PS192} -p 6 -j REDIRECT --to ${tcp_dk}
+
+					if [[ ${GXD} != "放行" && ${GXD} != "禁网" ]]
+					then
+						${IN} -I ${PS192} -p 17 -m multiport --dport 53,5353 -j REDIRECT --to 53
+					fi
+				fi
+			fi
+		fi
+		
+		if [[ ${SJ} == "开启" ]]
+		then
+			svc data enable
+		fi
+		
+		for ZJL in `echo "${PZ}" | sed -n 's/放行网卡=[ \t]*//p'`
+		do
+			${IN} -I ${OUT} -o ${ZJL} -j ACCEPT
+			${IM} -I ${OUT} -o ${ZJL} -j ACCEPT
+		done
+		
+		if [[ ${FX} ]]
+		then
+			for ZJL in ${FX}
+			do
+				${IN} -I ${OUT} -m owner --uid ${ZJL} -j ACCEPT
+				${IM} -I ${OUT} -m owner --uid ${ZJL} -j ACCEPT
+			done
+		fi
+		
+		if [[ ${JW} ]]
+		then
+			for ZJL in ${JW}
+			do
+				${IM} -I ${OUT} -m owner --uid ${ZJL} -j DROP
+			done
+		fi
+		
+		if [[ ${FU} == "放行" ]]
+		then
+			${IN} -I ${OUT} -p 17 -j ACCEPT
+			${IM} -I ${OUT} -p 17 -j ACCEPT
+			
+		elif [[ ${FUUID} ]]
+		then
+			for ZJL in ${FUUID}
+			do
+				${IN} -I ${OUT} -m owner --uid ${ZJL} -p 17 -j ACCEPT
+				${IM} -I ${OUT} -m owner --uid ${ZJL} -p 17 -j ACCEPT
+			done
+		fi
+		
+		if [[ ${YX} == "放行UID" || ${YX} == "放行UDP" || ${YX} == "禁网" ]]
+		then
+			for YXBM in com.tencent.tmgp.sgame com.tencent.tmgp.speedmobile com.tencent.tmgp.cf com.tencent.tmgp.pubgm com.netease.hyxd com.netease.zjz com.netease.dwrg
+			do
+				for ZJL in `grep ${YXBM} /data/system/packages.list | sed 's/[^ ]* //;s/ .*//'`
+				do
+					if [[ ${YX} == "放行UID" ]]
+					then
+						${IN} -I ${OUT} -m owner --uid ${ZJL} -j ACCEPT
+						${IM} -I ${OUT} -m owner --uid ${ZJL} -j ACCEPT
+
+					elif [[ ${YX} == "放行UDP" ]]
+					then
+						${IN} -I ${OUT} -p 17 -m owner --uid ${ZJL} -j ACCEPT
+						${IM} -I ${OUT} -p 17 -m owner --uid ${ZJL} -j ACCEPT
+
+					else
+						${IM} -I ${OUT} -m owner --uid ${ZJL} -j DROP
+					fi
+				done
+			done
+		fi
+		
+		if [[ ${FS} == "放行" ]]
+		then
+			${IN} -I ${OUT} -p 6 --dport 443 -j ACCEPT
+
+		elif [[ ${FSUID} ]]
+		then
+			for ZJL in ${FSUID}
+			do
+				${IN} -I ${OUT} -p 6 --dport 443 -m owner --uid ${ZJL} -j ACCEPT
+			done
+		fi
+		
+		if [[ ${IC} == "放行" ]]
+		then
+			${IN} -I ${OUT} -p 1 -j ACCEPT
+			${IM} -I ${OUT} -p 1 -j ACCEPT
+
+		elif [[ ${ICUID} ]]
+		then
+			for ZJL in ${ICUID}
+			do
+				${IN} -I ${OUT} -p 1 -m owner --uid-owner ${ZJL} -j ACCEPT
+				${IM} -I ${OUT} -p 1 -m owner --uid-owner ${ZJL} -j ACCEPT
+			done
+		fi
+		
+		if [[ `echo "${PZ}" | sed -n 's/放行QQ和微信电话=[ \t]*//p'` == "开启" ]]
+		then
+			QQUID=`grep com.tencent.mobileqq /data/system/packages.list | sed 's/[^ ]* //;s/ .*//'`
+			WXUID=`grep com.tencent.mm /data/system/packages.list | sed 's/[^ ]* //;s/ .*//'`
+			for ZJL in ${QQUID} ${WXUID}
+			do
+				${IN} -I ${OUT} -p 17 --dport 8000 -m owner --uid ${ZJL} -j ACCEPT
+				${IM} -I ${OUT} -p 17 --dport 8000 -m owner --uid ${ZJL} -j ACCEPT
+			done
+		fi
+		
+		if [[ ${FXBM} ]]
+		then
+			for BM in ${FXBM}
+			do
+				for ZJL in `grep $BM /data/system/packages.list | sed 's/[^ ]* //;s/ .*//'`
+				do
+					${IN} -I ${OUT} -m owner --uid ${ZJL} -j ACCEPT
+					${IM} -I ${OUT} -m owner --uid ${ZJL} -j ACCEPT
+				done
+			done
+		fi
+
+		if [[ ${FTCP} ]]
+		then
+			${IN} -I ${OUT} -p 6 -m multiport --dport ${FTCP} -j ACCEPT
+			${IM} -I ${OUT} -p 6 -m multiport --dport ${FTCP} -j ACCEPT
+		fi
+
+		if [[ ${FUDP} ]]
+		then
+			${IN} -I ${OUT} -p 17 -m multiport --dport ${FUDP} -j ACCEPT
+			${IM} -I ${OUT} -p 17 -m multiport --dport ${FUDP} -j ACCEPT
+		fi
+
+		if [[ ${GTCP} ]]
+		then
+			${IN} -I ${PS192} -p 6 -m multiport --dport ${GTCP} -j ACCEPT
+			${IM} -I ${PS192} -p 6 -m multiport --dport ${GTCP} -j ACCEPT
+		fi
+
+		if [[ ${GUDP} ]]
+		then
+			${IN} -I ${PS192} -p 17 -m multiport --dport ${GUDP} -j ACCEPT
+			${IM} -I ${PS192} -p 17 -m multiport --dport ${GUDP} -j ACCEPT
+		fi
+
+		if [[ `echo "${PZ}" | sed -n 's/共享UDP=[ \t]*//p'` == "放行" ]]
+		then
+			${IM} -I ${FOR} -p 17 -j ACCEPT
+			${IN} -I ${PS192} -p 17 -j ACCEPT
+			${IM} -I ${PS192} -p 17 -j ACCEPT
+		fi
+
+		if [[ ${GXS} == "放行" ]]
+		then
+			${IM} -I ${FOR} -p 6 --dport 443 -j ACCEPT
+			${IN} -I ${PS192} -p 6 --dport 443 -j ACCEPT
+
+		elif [[ ${GXS} == "禁网" ]]
+		then
+			${IM} -I ${PS192} -p 6 --dport 443 -j DROP
+		fi
+
+		if [[ ${GXD} == "放行" ]]
+		then
+			${IM} -I ${FOR} -p 17 --dport 53 -j ACCEPT
+		fi
+
+		if [[ `echo "${PZ}" | sed -n 's/共享ICMP=[ \t]*//p'` == "放行" ]]
+		then
+			${IM} -I ${FOR} -p 1 -j ACCEPT
+			${IM} -I ${PS192} -p 1 -j ACCEPT
+		fi
+
+		if [[ ${JCLW} == "开启" ]]
+		then
+			sleep 0.3
+		else
+			sleep 1.5
+		fi
+	fi
+fi
+
+produce(){
+	local product=$(printf "%*s" "$1" "$2")
+	echo "${product// /"$2"}"
+}
+
+ZJL(){
+	term_width=52
+
+	if [[ $1 == "SCJZ" ]]
+	then
+		if [[ `echo "$2" | grep -Eo [^\x00-\xff]+ | sed 's/[[:punct:]]//g;s/ //g'` ]]
+		then
+			chinese="`echo "$2" | grep -Eo [^\x00-\xff]+ | sed 's/[[:punct:]]//g;s/ //g'`"
+			chinese_length=${#chinese}
+			((english_length=${#2} - chinese_length))
+			((chinese_length=${chinese_length} * 41 / 75))
+			((total_width=chinese_length + english_length))
+		else
+			total_width=${#2}
+		fi
+		
+		((head_width=(term_width - total_width) / 2))
+		((end_width=(term_width - total_width) - head_width))
+
+		if [[ $5 == onn ]]
+		then
+			((head_width=head_width - 2))
+		elif [[ $5 == on ]]
+		then
+			((head_width=head_width - 1))
+		fi
+		
+		head=`produce "${head_width}" "$3"`
+		end=`produce "${end_width}" "$3"`
+		
+		if $4
+		then
+			echo "$6${head}$2${end}"
+		else
+			$4 "$6${head}$2${end}"
+		fi
+	fi
+	
+	if [[ $1 == "side" ]]
+	then
+		total_word="$2$3"
+		if [[ `echo "${total_word}" | grep -Eo [^\x00-\xff]+ | sed 's/[[:punct:]]//g;s/ //g'` ]]
+		then
+			chinese=`echo "${total_word}" | grep -Eo [^\x00-\xff]+ | sed 's/[[:punct:]]//g;s/ //g'`
+			((chinese_length=${#chinese} * 2))
+			((english_length=${#total_word} - chinese_length / 2))
+			((total_width=chinese_length + english_length))
+		else
+			total_width=${#total_word}
+		fi
+		
+		if [[ $6 == on ]]
+		then
+			((total_width=total_width + 2))
+		elif [[ $6 == onn ]]
+		then
+			((total_width=total_width + 3))
+		fi
+		((left_width=term_width - total_width))
+		space=`produce ${left_width} " "`
+		
+		if $5
+		then
+			echo "$7$2${space}$3"
+		else
+			$5 "$7$2$s{pace}$3"
+		fi
+	fi
+}
+
+ZJL SCJZ "  ───────────────────\n" " "
+ZJL SCJZ "  ZJL  2.0\n" " "
+
+if [[ ${JCBU} == "OFF" ]]
+then
+	ZJL SCJZ " 无busybox使用\n" " "
+fi
+
+ZJL SCJZ "  ───────────────────\n" " "
+
+SCMS="   模式:"
+
+if [[ ${ZLIP} ]]
+then
+	if [[ `pgrep redsocks2` ]]
+	then
+		redsocks2=√
+	else
+		redsocks2=×
+	fi
+	
+	if [[ ${ZLDNS} != "OFF" ]]
+	then
+		if [[ `pgrep pdnsd` ]]
+		then
+			pdnsd=√
+		else
+			pdnsd=×
+		fi
+	fi
+	
+	ZJL SCJZ "   直连: ${ZLIP}:${ZLDK}\n" " "
+	
+	if [[ ${ZLDNS} != "OFF" ]]
+	then
+		ZJL SCJZ "    模块: redsocks2 ${redsocks2} pdnsd ${PDNS}d\n" " "
+	else
+		ZJL SCJZ "    模块: redsocks2 ${redsocks2}\n" " "
+	fi
+	
+else
+	for ZJL in tiny CProxy localproxy
+	do
+		if [[ `pgrep ${ZJL}` ]]
+		then
+			MLHX=${ZJL}
+		fi
+	done
+	
+	if [[ ${MLHX} ]]
+	then
+		ZJL SCJZ "  核心: ${MLHX} √\n" " "
+	else
+		ZJL SCJZ "  核心: 啥都没开 ×\n" " "
+	fi
+	
+	if [[ ${XZMS} ]] && [[ ${JCMS} == "" && ${JCMS} != "MNR" ]]
+	then
+		ZJL SCJZ "${SCMS} ${XZMS}.conf\n" " "
+	fi
+	
+	case ${JCMS} in
+	WZD)
+		ZJL SCJZ "${SCMS} 没找到${MS}\n" " "
+	;;
+	QXZ)
+		for ZJL in `echo *.conf`
+		do
+			ZJL SCJZ "  可选: ${ZJL}\n" " "
+		done
+		ZJL SCJZ "${SCMS} 配置里选择模式 !\n" " "
+	;;
+	MNR)
+		ZJL SCJZ "${SCMS} 模式内容呢 ?\n" " "
+	;;
+	MMS)
+		ZJL SCJZ "${SCMS} 请添加模式 !\n" " "
+	;;
+	esac
+fi 2>/dev/null
+
+HQWK=`ip -4 addr | grep global | grep -v dynamic | grep -v tun | grep -wv "192.168.43.1"`
+
+WWK=`echo "${HQWK}" | grep -v wlan | sed 's/[ \t]*$//g;s/$*.*. //g'`
+
+NW=`echo "${HQWK}" | grep -v wlan | sed -r 's#.*inet (.*)/[0-9].*#\1#'`
+
+HQAPN=`dumpsys connectivity`
+
+APN=`echo "${HQAPN}" | grep -v ims | grep -v tun | grep extra: | grep -v "(none)" | grep -v "<unknown" | sed 's/.*extra: //;s/,.*//'`
+
+if [[ `echo "${HQWK}" | grep wlan` != "" ]]
+then
+	WIFIMC=`echo "${APN}" | grep '"' | sed 's/"//g'`
+	
+	ZJL SCJZ "  ───────────────────\n" " "
+	ZJL SCJZ "   网络: WIFI 已连接 √\n" " "
+	ZJL SCJZ "   名称: ${WIFIMC}\n" " "
+	
+	if [ -s /data/misc/wifi/WifiConfigStore.xml ]
+	then
+		WIFIMM=`grep -wA 3 '<string name="SSID">&quot;'${WIFIMC}'' /data/misc/wifi/WifiConfigStore.xml | sed -n 's/<string name="PreSharedKey">&quot;*//p' | sed 's/&quot.*//'`
+	else
+		WIFIMM=`grep -wA 3 'ssid='\"${WIFIMC}\"'' /data/misc/wifi/wpa_supplicant.conf | sed -n 's/[ \t]psk=//p' | sed 's/"//g'`
+	fi
+	
+	if [[ ${WIFIMM} ]]
+	then
+		ZJL SCJZ "   密码: ${WIFIMM}\n" " "
+	fi
+	
+	if [[ ${JCBU} != "OFF" ]]
+	then
+		SWK=`ifconfig wlan0`
+		TX=`echo "${SWK#*RX bytes:}" | sed 's/\([^(]*(\)\([^)]*\)\(.*\)/\2/;s/i.*//g'`
+		
+		if [[ ${TX} == "0.0 B" || ${TX} == "" ]]
+		then
+			ZJL SCJZ "   已用: 没查到 ×\n" " "
+		else
+			ZJL SCJZ "   已用: ${TX}\n" " "
+		fi
+	fi
+	
+elif [[ ${NW} ]]
+then
+	if [[ ${ZLIP}${JCMS} ]]
+	then
+		ZJL SCJZ "  ───────────────────\n" " "
+	fi
+	ZJL SCJZ "   内网: ${NW}\n" " "
+	
+	HQJRD=`echo "${HQAPN}" | grep HttpProxy:`
+	
+	JRDDL=`echo ${HQJRD#*HttpProxy} | sed 's/.*: \[//;s/\].*//'`
+	
+	JRDDK=`echo ${HQJRD#*$JRDDL} | sed 's/[^ ]* //;s/ .*//'`
+	
+	if [[ ${JRDDL}${JRDDK} ]]
+	then
+		ZJL SCJZ "  APN: ${APN} ${JRDDL} ${JRDDK}\n" " "
+	else
+		ZJL SCJZ " APN: ${APN} 代理留空\n" " "
+	fi
+	
+	if [[ ${JCLW} == "开启" ]]
+	then
+		if [[ `curl --connect-timeout 1 http://ip.cip.cc/` ]]
+		then
+			HTTP_LW="成功 √"
+		else
+			HTTP_LW="失败 ×"
+		fi
+		
+		if [[ `curl --connect-timeout 1 http://ip.ws.126.net/ipquery/` ]]
+		then
+			HTTPS_LW="成功 √"
+		else
+			HTTPS_LW="失败 ×"
+		fi
+	fi
+	
+	if [[ ${JCBU} != "OFF" ]]
+	then
+		SWK=`ifconfig ${WWK}`
+		TX=`echo "${SWK#*RX bytes:}" | sed 's/\([^(]*(\)\([^)]*\)\(.*\)/\2/;s/i.*//g'`
+		
+		if [[ ${TX} == "0.0 B" || ${TX} == "" ]]
+		then
+			ZJL SCJZ "   已用: 没查到 ×\n" " "
+		else
+			ZJL SCJZ "   已用: ${TX}\n" " "
+		fi
+	fi
+	
+	if [[ ${JCLW} == "开启" ]]
+	then
+		ZJL SCJZ "  ───────────────────\n" " "
+		ZJL SCJZ "  HTTP 联网${HTTP_LW}  HTTPS 联网${HTTPS_LW}\n" " "
+	fi
+else
+	ZJL SCJZ "   网络: 数据都没开 ×\n" " "
+fi 2>/dev/null
+
+HQRWK=`sed -n 's/interface=//p' /data/misc/wifi/hostapd.conf | sed -n '1p'` 2>/dev/null
+
+if [[ `ip addr | grep "${HQRWK}" | grep -w "192.168.43.1"` ]]
+then
+	zjl=0
+	
+	for ZJL in `ip neigh | grep REACHABLE | sed 's/ .*//'`
+	do
+		((zjl=${zjl}+1))
+	done
+	
+	ZJL SCJZ "  ───────────────────\n" " "
+	ZJL SCJZ "  热点: ${ZJL} 个已连接\n" " "
+	ZJL SCJZ "  信息:`cat /data/misc/wifi/softap.conf`\n" " "
+	
+	if [[ ${JCBU} != "OFF" ]]
+	then
+		RWK=`ifconfig ${HQRWK}`
+		
+		ZJL SCJZ "    已用: `echo ${RWK#*TX bytes:} | sed 's/\([^(]*(\)\([^)]*\)\(.*\)/\2/;s/i.*//g'`\n" " "
+	fi
+fi 2>/dev/null
+
+if [[ ${XWB} ]]
+then
+	ZJL SCJZ "  ───────────────────\n" " "
+	echo "${XWB}" | while read ZJL;do
+		ZJL SCJZ "${ZJL}" " "
+	done
+	echo
+fi
+
+ZJL SCJZ "───────────────────" " "
